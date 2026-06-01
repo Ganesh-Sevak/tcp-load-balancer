@@ -8,6 +8,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(lb_core
     src/config.cpp
+    src/logger.cpp
+    src/runtime.cpp
     src/scheduler.cpp
 )
 target_include_directories(lb_core PUBLIC include)
@@ -15,6 +17,7 @@ target_compile_options(lb_core PRIVATE -Wall -Wextra -Wpedantic)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_executable(tcp-load-balancer
+        src/admin.cpp
         src/main.cpp
         src/server.cpp
     )

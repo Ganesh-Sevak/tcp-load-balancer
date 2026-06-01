@@ -1,6 +1,8 @@
 build/
 .cache/
 .DS_Store
+node_modules/
+web/dist/
 *.o
 *.a
 *.so
@@ -8,4 +10,3 @@ build/
 *.log
 __pycache__/
 .pytest_cache/
-

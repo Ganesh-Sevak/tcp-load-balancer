@@ -48,6 +48,31 @@ void least_connections_picks_lowest_active_count() {
     require(scheduler.select()->index == 0, "least connections returns to lowered backend");
 }
 
+void scheduler_skips_unroutable_backends() {
+    lb::Scheduler scheduler(backends(), lb::Policy::RoundRobin);
+
+    scheduler.set_state(0, lb::BackendState::Down);
+    require(scheduler.select()->index == 1, "round robin skips down backend");
+
+    scheduler.set_state(1, lb::BackendState::Draining);
+    require(scheduler.select()->index == 2, "round robin skips draining backend");
+
+    scheduler.set_state(2, lb::BackendState::Down);
+    require(!scheduler.select().has_value(), "scheduler returns null when all backends are unroutable");
+}
+
+void power_of_two_choices_routes_to_available_backend() {
+    lb::Scheduler scheduler(backends(), lb::Policy::PowerOfTwoChoices);
+    scheduler.set_state(0, lb::BackendState::Down);
+    scheduler.set_state(1, lb::BackendState::Down);
+
+    for (int i = 0; i < 8; ++i) {
+        const auto selected = scheduler.select();
+        require(selected.has_value(), "p2c returns available backend");
+        require(selected->index == 2, "p2c skips down backends");
+    }
+}
+
 void closed_connection_never_underflows() {
     lb::Scheduler scheduler(backends(), lb::Policy::LeastConnections);
     scheduler.mark_closed(0);
@@ -59,6 +84,8 @@ void closed_connection_never_underflows() {
 int main() {
     round_robin_rotates_across_backends();
     least_connections_picks_lowest_active_count();
+    scheduler_skips_unroutable_backends();
+    power_of_two_choices_routes_to_available_backend();
     closed_connection_never_underflows();
 
     std::cout << "scheduler tests passed\n";

@@ -33,6 +33,9 @@ Policy parse_policy(const std::string& value) {
     if (normalized == "least-connections" || normalized == "least_connections" || normalized == "lc") {
         return Policy::LeastConnections;
     }
+    if (normalized == "power-of-two-choices" || normalized == "power_of_two_choices" || normalized == "p2c") {
+        return Policy::PowerOfTwoChoices;
+    }
     throw std::invalid_argument("unknown scheduling policy: " + value);
 }
 
@@ -42,6 +45,8 @@ std::string to_string(Policy policy) {
             return "round-robin";
         case Policy::LeastConnections:
             return "least-connections";
+        case Policy::PowerOfTwoChoices:
+            return "power-of-two-choices";
     }
     return "unknown";
 }
@@ -93,10 +98,26 @@ AppConfig load_config_file(const std::string& path) {
 
         if (key == "listen") {
             config.listen = parse_endpoint(value);
+        } else if (key == "admin") {
+            config.admin = parse_endpoint(value);
         } else if (key == "policy") {
             config.policy = parse_policy(value);
         } else if (key == "backend") {
             config.backends.push_back(parse_endpoint(value));
+        } else if (key == "workers") {
+            config.worker_count = static_cast<std::uint32_t>(std::stoul(value));
+        } else if (key == "file_limit") {
+            config.file_limit = static_cast<std::uint32_t>(std::stoul(value));
+        } else if (key == "connect_timeout_ms") {
+            config.connect_timeout_ms = static_cast<std::uint32_t>(std::stoul(value));
+        } else if (key == "idle_timeout_ms") {
+            config.idle_timeout_ms = static_cast<std::uint32_t>(std::stoul(value));
+        } else if (key == "health_interval_ms") {
+            config.health_interval_ms = static_cast<std::uint32_t>(std::stoul(value));
+        } else if (key == "health_timeout_ms") {
+            config.health_timeout_ms = static_cast<std::uint32_t>(std::stoul(value));
+        } else if (key == "passive_failure_threshold") {
+            config.passive_failure_threshold = static_cast<std::uint32_t>(std::stoul(value));
         } else {
             throw std::runtime_error("unknown config key on line " + std::to_string(line_number) + ": " + key);
         }
@@ -110,4 +131,3 @@ AppConfig load_config_file(const std::string& path) {
 }
 
 }  // namespace lb
-

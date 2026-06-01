@@ -1,3 +1,11 @@
+FROM node:24-alpine AS web-build
+
+WORKDIR /web
+COPY web/package*.json ./
+RUN npm ci
+COPY web/ .
+RUN npm run build
+
 FROM ubuntu:24.04 AS build
 
 RUN apt-get update \
@@ -20,8 +28,8 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=build /src/build/tcp-load-balancer /usr/local/bin/tcp-load-balancer
 COPY config/backends.conf /app/config/backends.conf
+COPY --from=web-build /web/dist /app/web/dist
 
-EXPOSE 9000
+EXPOSE 9000 9100
 ENTRYPOINT ["tcp-load-balancer"]
 CMD ["--config", "/app/config/backends.conf"]
-

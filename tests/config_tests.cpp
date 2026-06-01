@@ -25,6 +25,7 @@ void policy_parser_accepts_aliases() {
     require(lb::parse_policy("rr") == lb::Policy::RoundRobin, "rr alias parsed");
     require(lb::parse_policy("least-connections") == lb::Policy::LeastConnections, "least-connections parsed");
     require(lb::parse_policy("lc") == lb::Policy::LeastConnections, "lc alias parsed");
+    require(lb::parse_policy("p2c") == lb::Policy::PowerOfTwoChoices, "p2c alias parsed");
 }
 
 void endpoint_parser_rejects_invalid_ports() {
