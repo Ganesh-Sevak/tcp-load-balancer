@@ -171,8 +171,3 @@ backend pool + health state
 Each client connection is paired with a backend connection. Incoming data is appended to the paired socket's output buffer and flushed whenever the socket is writable. If a paired output buffer grows beyond the high-water mark, reads from the source socket are temporarily disabled, applying back-pressure instead of allowing unbounded memory growth.
 
 Least-connections scheduling tracks active proxied connections per backend and routes new clients to the backend with the lowest current count. Round-robin uses an atomic counter to rotate across backend indexes. Power-of-two-choices samples two routable backends and chooses the one with fewer active connections.
-
-## Resume Bullets
-
-- Implemented a sharded C++ TCP load balancer using Linux `epoll` and `SO_REUSEPORT`, with round-robin, least-connections, and power-of-two-choices scheduling.
-- Built health checks, passive backend ejection, admin metrics/SSE endpoints, and a real-time React dashboard for live routing and back-pressure observability.
