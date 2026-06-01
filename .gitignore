@@ -1,0 +1,11 @@
+build/
+.cache/
+.DS_Store
+*.o
+*.a
+*.so
+*.dylib
+*.log
+__pycache__/
+.pytest_cache/
+
