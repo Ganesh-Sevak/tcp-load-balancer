@@ -7,7 +7,7 @@ repo. The goal of this round of work is explicit:
 > and build a real-time observability UI for it.**
 
 Read this whole file before touching code. The changes below are ordered by
-résumé/interview impact. Ship them as small, reviewable, independently-mergeable
+technical impact. Ship them as small, reviewable, independently-mergeable
 PRs — each with tests, a benchmark or screenshot where relevant, and a README
 update. Keep CI green and keep the binary building on Linux at every step.
 
@@ -46,7 +46,7 @@ These are real defects. Fixing them is cheap and signals rigor.
    idle timeout and reap stale pairs.
 3. **README overclaims concurrency.** Until item 3.1 lands, the "10K+ connections"
    line is misleading on a single thread. Either land sharded threading or soften
-   the claim — don't ship a résumé bullet the code can't back up.
+   the claim — don't ship a project claim the code can't back up.
 4. **`std::cout`/`std::cerr` logging only.** No levels, no structure. Introduce a
    tiny leveled logger (or spdlog) with timestamps; this also feeds the metrics work.
 5. **Hardcoded `raise_file_limit()` target of 25000.** Drive it from config.
@@ -182,7 +182,7 @@ memorable combination.
    errors tear down only that pair, never the worker.
 4. **No coordinated-omission'd latency numbers in the README.** Any published
    percentile must come from the open-loop + HdrHistogram harness (3.4).
-5. **Don't overclaim.** A résumé bullet or README claim must be backed by code that
+5. **Don't overclaim.** A README or project claim must be backed by code that
    is merged and by a benchmark that was actually run on stated hardware.
 6. **No secrets in the repo.** Config/flags only.
 7. **Keep PRs small and scoped.** One capability per PR with its own tests.

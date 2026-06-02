@@ -6,7 +6,7 @@ No headline throughput or latency numbers are published yet. This file documents
 
 The original `scripts/benchmark.py` is a closed-loop smoke benchmark: a client sends a request, waits for the echo, then sends the next request. That is useful for correctness, but it hides queueing delay under overload.
 
-Use `scripts/open_loop_benchmark.py` for any README or resume-grade latency number. It schedules arrivals at a fixed target QPS and measures scheduled-send to full-response latency, which makes overload visible in p99 and p99.9.
+Use `scripts/open_loop_benchmark.py` for any published latency number. It schedules arrivals at a fixed target QPS and measures scheduled-send to full-response latency, which makes overload visible in p99 and p99.9.
 
 ## Run
 
@@ -42,4 +42,3 @@ When adding numbers, include:
 ## Current Status
 
 The repository includes the benchmark harness and CI coverage for the Linux build. No hardware-specific performance claims are currently made in the README.
-
