@@ -1,8 +1,10 @@
 #include "lb/config.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -21,6 +23,18 @@ std::string lower(std::string value) {
         return static_cast<char>(std::tolower(c));
     });
     return value;
+}
+
+std::uint32_t parse_u32(const std::string& value, std::uint32_t max_value, const std::string& field) {
+    const auto input = trim(value);
+    std::uint32_t parsed = 0;
+    const auto* begin = input.data();
+    const auto* end = input.data() + input.size();
+    const auto [ptr, ec] = std::from_chars(begin, end, parsed);
+    if (input.empty() || ec != std::errc{} || ptr != end || parsed > max_value) {
+        throw std::invalid_argument(field + " out of range: " + value);
+    }
+    return parsed;
 }
 
 }  // namespace
@@ -58,8 +72,8 @@ Endpoint parse_endpoint(const std::string& value) {
         throw std::invalid_argument("endpoint must be host:port: " + value);
     }
 
-    const auto port_number = std::stoul(input.substr(pos + 1));
-    if (port_number == 0 || port_number > 65535) {
+    const auto port_number = parse_u32(input.substr(pos + 1), std::numeric_limits<std::uint16_t>::max(), "port");
+    if (port_number == 0) {
         throw std::invalid_argument("port out of range in endpoint: " + value);
     }
 
@@ -105,19 +119,19 @@ AppConfig load_config_file(const std::string& path) {
         } else if (key == "backend") {
             config.backends.push_back(parse_endpoint(value));
         } else if (key == "workers") {
-            config.worker_count = static_cast<std::uint32_t>(std::stoul(value));
+            config.worker_count = parse_u32(value, std::numeric_limits<std::uint32_t>::max(), key);
         } else if (key == "file_limit") {
-            config.file_limit = static_cast<std::uint32_t>(std::stoul(value));
+            config.file_limit = parse_u32(value, std::numeric_limits<std::uint32_t>::max(), key);
         } else if (key == "connect_timeout_ms") {
-            config.connect_timeout_ms = static_cast<std::uint32_t>(std::stoul(value));
+            config.connect_timeout_ms = parse_u32(value, std::numeric_limits<std::uint32_t>::max(), key);
         } else if (key == "idle_timeout_ms") {
-            config.idle_timeout_ms = static_cast<std::uint32_t>(std::stoul(value));
+            config.idle_timeout_ms = parse_u32(value, std::numeric_limits<std::uint32_t>::max(), key);
         } else if (key == "health_interval_ms") {
-            config.health_interval_ms = static_cast<std::uint32_t>(std::stoul(value));
+            config.health_interval_ms = parse_u32(value, std::numeric_limits<std::uint32_t>::max(), key);
         } else if (key == "health_timeout_ms") {
-            config.health_timeout_ms = static_cast<std::uint32_t>(std::stoul(value));
+            config.health_timeout_ms = parse_u32(value, std::numeric_limits<std::uint32_t>::max(), key);
         } else if (key == "passive_failure_threshold") {
-            config.passive_failure_threshold = static_cast<std::uint32_t>(std::stoul(value));
+            config.passive_failure_threshold = parse_u32(value, std::numeric_limits<std::uint32_t>::max(), key);
         } else {
             throw std::runtime_error("unknown config key on line " + std::to_string(line_number) + ": " + key);
         }

@@ -36,6 +36,12 @@ Shared state is limited to backend scheduler state, backend health, and atomics 
 5. If an output buffer crosses the high-water mark, reads from the source socket are paused until the buffer drains.
 6. Connect timeout, idle timeout, socket error, EOF, or backend failure closes only that connection pair.
 
+## Buffering Strategy
+
+`lb::OutputBuffer` owns queued bytes for one socket direction. It tracks a read offset instead of erasing from the front on every partial write, so common short writes are cheap. The buffer compacts only after the consumed prefix is both large and at least half of retained storage, which keeps memory bounded without adding frequent memmoves to the write path.
+
+The event loop uses `readable_span()` for contiguous writes and `consume()` after successful writes. Back-pressure decisions use the unread byte count, not retained capacity.
+
 ## Scheduling
 
 Supported policies:

@@ -2,6 +2,7 @@
 
 #include "lb/admin.hpp"
 #include "lb/logger.hpp"
+#include "lb/output_buffer.hpp"
 #include "lb/runtime.hpp"
 
 #include <arpa/inet.h>
@@ -204,8 +205,7 @@ struct TcpLoadBalancer::Impl {
         Clock::time_point connected_started_at{};
         Clock::time_point connect_deadline{};
         Clock::time_point last_activity{};
-        std::vector<char> outbound;
-        std::size_t sent{0};
+        OutputBuffer outbound{kBufferCompactThreshold};
     };
 
     struct Worker {
@@ -322,7 +322,7 @@ struct TcpLoadBalancer::Impl {
 
             const auto& peer = it->second;
             std::uint32_t events = EPOLLERR | EPOLLHUP | EPOLLRDHUP;
-            if (peer.connecting || peer.sent < peer.outbound.size()) {
+            if (peer.connecting || !peer.outbound.empty()) {
                 events |= EPOLLOUT;
             }
 
@@ -435,9 +435,7 @@ struct TcpLoadBalancer::Impl {
                         return;
                     }
                     paired->second.last_activity = source.last_activity;
-                    paired->second.outbound.insert(paired->second.outbound.end(),
-                                                   read_buffer.begin(),
-                                                   read_buffer.begin() + n);
+                    paired->second.outbound.append({read_buffer.data(), static_cast<std::size_t>(n)});
 
                     if (from_backend) {
                         runtime->record_bytes_from_backend(id, backend_index, static_cast<std::uint64_t>(n));
@@ -476,32 +474,21 @@ struct TcpLoadBalancer::Impl {
         void flush(int fd) {
             while (peers.contains(fd)) {
                 auto& peer = peers[fd];
-                if (peer.connecting || peer.sent >= peer.outbound.size()) {
-                    if (peer.sent >= peer.outbound.size()) {
-                        peer.outbound.clear();
-                        peer.sent = 0;
-                    }
+                if (peer.connecting || peer.outbound.empty()) {
                     return;
                 }
 
-                const char* data = peer.outbound.data() + peer.sent;
-                const std::size_t remaining = peer.outbound.size() - peer.sent;
-                const ssize_t n = write(fd, data, remaining);
+                const auto readable = peer.outbound.readable_span();
+                const ssize_t n = write(fd, readable.data(), readable.size());
                 if (n > 0) {
-                    peer.sent += static_cast<std::size_t>(n);
+                    peer.outbound.consume(static_cast<std::size_t>(n));
                     peer.last_activity = Clock::now();
-                    if (peer.sent == peer.outbound.size()) {
-                        peer.outbound.clear();
-                        peer.sent = 0;
+                    if (peer.outbound.empty()) {
                         const int paired_fd = peer.paired_fd;
                         if (peers.contains(paired_fd)) {
                             modify_fd(paired_fd);
                         }
                         return;
-                    }
-                    if (peer.sent >= kBufferCompactThreshold && peer.sent >= peer.outbound.size() / 2) {
-                        peer.outbound.erase(peer.outbound.begin(), peer.outbound.begin() + peer.sent);
-                        peer.sent = 0;
                     }
                     continue;
                 }

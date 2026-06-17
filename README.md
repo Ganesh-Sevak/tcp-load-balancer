@@ -24,10 +24,12 @@ A systems-focused TCP load balancer written in modern C++ for Linux. It proxies 
 | Data path | `src/server.cpp`, `include/lb/server.hpp` |
 | Scheduling and health state | `src/scheduler.cpp`, `include/lb/scheduler.hpp` |
 | Runtime observability contract | `src/runtime.cpp`, `include/lb/runtime.hpp` |
+| Data-path buffering | `src/output_buffer.cpp`, `include/lb/output_buffer.hpp` |
 | Admin API and static dashboard serving | `src/admin.cpp`, `include/lb/admin.hpp` |
 | Dashboard | `web/src/App.jsx`, `web/src/useStats.js`, `docs/dashboard.png` |
 | Benchmark methodology | `BENCHMARKS.md`, `scripts/open_loop_benchmark.py` |
 | Architecture notes | `docs/ARCHITECTURE.md` |
+| Performance notes | `docs/PERFORMANCE_NOTES.md` |
 
 ## Quick Demo
 
@@ -61,7 +63,7 @@ Open `http://127.0.0.1:9100`.
 - Real-time React dashboard with topology, health timeline, connect-latency histogram, and mock-data demo mode
 - Connect and idle timeout reaping
 - Structured leveled logging
-- Per-connection buffering with read throttling for back-pressure
+- Tested per-connection output buffer with bounded compaction and read throttling for back-pressure
 - Config-file driven listener, backend, and policy selection
 - Unit-tested scheduler, config, runtime metrics, and admin route logic
 - Docker build for Linux deployment

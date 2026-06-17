@@ -38,12 +38,31 @@ void endpoint_parser_rejects_invalid_ports() {
     require(rejected, "invalid port rejected");
 }
 
+void endpoint_parser_rejects_partial_and_negative_ports() {
+    bool partial_rejected = false;
+    try {
+        (void)lb::parse_endpoint("127.0.0.1:9000abc");
+    } catch (const std::invalid_argument&) {
+        partial_rejected = true;
+    }
+    require(partial_rejected, "partial numeric port rejected");
+
+    bool negative_rejected = false;
+    try {
+        (void)lb::parse_endpoint("127.0.0.1:-1");
+    } catch (const std::invalid_argument&) {
+        negative_rejected = true;
+    }
+    require(negative_rejected, "negative port rejected");
+}
+
 }  // namespace
 
 int main() {
     endpoint_parser_accepts_host_port();
     policy_parser_accepts_aliases();
     endpoint_parser_rejects_invalid_ports();
+    endpoint_parser_rejects_partial_and_negative_ports();
 
     std::cout << "config tests passed\n";
     return 0;

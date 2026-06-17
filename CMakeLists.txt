@@ -12,6 +12,7 @@ add_library(lb_core
     src/admin_routes.cpp
     src/config.cpp
     src/logger.cpp
+    src/output_buffer.cpp
     src/runtime.cpp
     src/scheduler.cpp
 )
@@ -55,6 +56,12 @@ target_link_libraries(admin_tests PRIVATE lb_core)
 target_compile_options(admin_tests PRIVATE -Wall -Wextra -Wpedantic)
 
 add_test(NAME admin_tests COMMAND admin_tests)
+
+add_executable(output_buffer_tests tests/output_buffer_tests.cpp)
+target_link_libraries(output_buffer_tests PRIVATE lb_core)
+target_compile_options(output_buffer_tests PRIVATE -Wall -Wextra -Wpedantic)
+
+add_test(NAME output_buffer_tests COMMAND output_buffer_tests)
 
 if(LB_ENABLE_FUZZING)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
