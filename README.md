@@ -1,8 +1,56 @@
 # TCP Load Balancer
 
+[![CI](https://github.com/Ganesh-Sevak/tcp-load-balancer/actions/workflows/ci.yml/badge.svg)](https://github.com/Ganesh-Sevak/tcp-load-balancer/actions/workflows/ci.yml)
+![C++20](https://img.shields.io/badge/C%2B%2B-20-00599c)
+![Linux](https://img.shields.io/badge/runtime-Linux-2ea44f)
+![React](https://img.shields.io/badge/dashboard-React-61dafb)
+![Prometheus](https://img.shields.io/badge/metrics-Prometheus-e6522c)
+
 A systems-focused TCP load balancer written in modern C++ for Linux. It proxies raw TCP streams with sharded nonblocking `epoll` workers, active backend health, Prometheus-style observability, and a live React control dashboard.
 
 ![Live observability dashboard](docs/dashboard.png)
+
+## Why This Project Is Interesting
+
+- **Systems depth:** sharded `SO_REUSEPORT` workers, nonblocking `epoll`, back-pressure, timeout reaping, and passive backend ejection.
+- **Operational story:** JSON stats, Prometheus metrics, SSE streaming, manual backend drain/enable, and a real dashboard rather than terminal-only demos.
+- **Recruiter-readable rigor:** tests for scheduler/config/runtime/admin contracts, sanitizer/fuzzer CI scaffolding, and benchmark methodology that avoids unearned claims.
+- **Demo friendly:** mock dashboard mode shows the full control plane without requiring a Linux host or running backend services.
+
+## Repository Tour
+
+| Area | What to look at |
+| --- | --- |
+| Data path | `src/server.cpp`, `include/lb/server.hpp` |
+| Scheduling and health state | `src/scheduler.cpp`, `include/lb/scheduler.hpp` |
+| Runtime observability contract | `src/runtime.cpp`, `include/lb/runtime.hpp` |
+| Admin API and static dashboard serving | `src/admin.cpp`, `include/lb/admin.hpp` |
+| Dashboard | `web/src/App.jsx`, `web/src/useStats.js`, `docs/dashboard.png` |
+| Benchmark methodology | `BENCHMARKS.md`, `scripts/open_loop_benchmark.py` |
+| Architecture notes | `docs/ARCHITECTURE.md` |
+
+## Quick Demo
+
+Dashboard-only demo, no Linux server required:
+
+```bash
+cd web
+npm ci
+npm run dev
+```
+
+Open the Vite URL and keep mock mode enabled.
+
+Full Linux demo:
+
+```bash
+python3 scripts/echo_backends.py --ports 9101 9102
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+./build/tcp-load-balancer --config config/backends.conf
+```
+
+Open `http://127.0.0.1:9100`.
 
 ## Features
 
@@ -195,3 +243,13 @@ Each client connection is paired with a backend connection. Incoming data is app
 Least-connections scheduling tracks active proxied connections per backend and routes new clients to the backend with the lowest current count. Round-robin uses an atomic counter to rotate across backend indexes. Power-of-two-choices samples two routable backends and chooses the one with fewer active connections.
 
 The admin server runs separately from the proxy workers and exposes the same runtime snapshot through JSON, Prometheus text, and SSE. The React dashboard consumes SSE when available, falls back to polling `/stats`, and can run in mock mode for demos and screenshots without a live load balancer.
+
+## Quality Bar
+
+- CI builds C++ and dashboard code on Ubuntu.
+- Sanitizer jobs cover ASan/UBSan and TSan test runs.
+- `clang-tidy` runs against C++ sources.
+- A libFuzzer target exercises config parser entry points.
+- PR and issue templates require verification, screenshots, or benchmark metadata where relevant.
+
+See `CONTRIBUTING.md` for review expectations and `SECURITY.md` for vulnerability reporting.
