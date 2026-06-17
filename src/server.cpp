@@ -6,6 +6,7 @@
 
 #include <arpa/inet.h>
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
@@ -36,6 +37,7 @@ constexpr int kBacklog = 65535;
 constexpr int kMaxEvents = 1024;
 constexpr std::size_t kBufferSize = 64 * 1024;
 constexpr std::size_t kHighWatermark = 1024 * 1024;
+constexpr std::size_t kBufferCompactThreshold = 256 * 1024;
 
 void throw_errno(const std::string& message) {
     throw std::runtime_error(message + ": " + std::strerror(errno));
@@ -213,6 +215,7 @@ struct TcpLoadBalancer::Impl {
         int listener_fd{-1};
         int timer_fd{-1};
         std::unordered_map<int, Peer> peers;
+        std::array<char, kBufferSize> read_buffer{};
 
         void run(std::atomic_bool& stop_requested) {
             listener_fd = make_listener(runtime->config().listen, true);
@@ -370,7 +373,7 @@ struct TcpLoadBalancer::Impl {
 
             const int backend_fd = connect_backend(selected->endpoint);
             if (backend_fd == -1) {
-                runtime->record_backend_failure(selected->index);
+                runtime->record_backend_failure(id, selected->index);
                 maybe_eject(selected->index);
                 close(client_fd);
                 return;
@@ -378,7 +381,7 @@ struct TcpLoadBalancer::Impl {
 
             const auto now = Clock::now();
             const auto connect_timeout = std::chrono::milliseconds(runtime->config().connect_timeout_ms);
-            runtime->record_connection_open(selected->index);
+            runtime->record_connection_open(id, selected->index);
 
             peers.emplace(client_fd,
                           Peer{client_fd, backend_fd, selected->index, false, false, now, now + connect_timeout, now});
@@ -417,10 +420,8 @@ struct TcpLoadBalancer::Impl {
         }
 
         void read_available(int fd) {
-            std::vector<char> buffer(kBufferSize);
-
             while (peers.contains(fd)) {
-                const ssize_t n = read(fd, buffer.data(), buffer.size());
+                const ssize_t n = read(fd, read_buffer.data(), read_buffer.size());
                 if (n > 0) {
                     auto& source = peers[fd];
                     source.last_activity = Clock::now();
@@ -434,12 +435,14 @@ struct TcpLoadBalancer::Impl {
                         return;
                     }
                     paired->second.last_activity = source.last_activity;
-                    paired->second.outbound.insert(paired->second.outbound.end(), buffer.begin(), buffer.begin() + n);
+                    paired->second.outbound.insert(paired->second.outbound.end(),
+                                                   read_buffer.begin(),
+                                                   read_buffer.begin() + n);
 
                     if (from_backend) {
-                        runtime->record_bytes_from_backend(backend_index, static_cast<std::uint64_t>(n));
+                        runtime->record_bytes_from_backend(id, backend_index, static_cast<std::uint64_t>(n));
                     } else {
-                        runtime->record_bytes_from_client(backend_index, static_cast<std::uint64_t>(n));
+                        runtime->record_bytes_from_client(id, backend_index, static_cast<std::uint64_t>(n));
                     }
 
                     flush(paired_fd);
@@ -496,6 +499,10 @@ struct TcpLoadBalancer::Impl {
                         }
                         return;
                     }
+                    if (peer.sent >= kBufferCompactThreshold && peer.sent >= peer.outbound.size() / 2) {
+                        peer.outbound.erase(peer.outbound.begin(), peer.outbound.begin() + peer.sent);
+                        peer.sent = 0;
+                    }
                     continue;
                 }
                 if (n == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -535,9 +542,9 @@ struct TcpLoadBalancer::Impl {
 
             for (const auto& [fd, backend_failure] : expired) {
                 if (backend_failure) {
-                    runtime->metrics().connect_timeouts.fetch_add(1, std::memory_order_relaxed);
+                    runtime->record_connect_timeout(id);
                 } else {
-                    runtime->metrics().idle_timeouts.fetch_add(1, std::memory_order_relaxed);
+                    runtime->record_idle_timeout(id);
                 }
                 close_pair(fd, backend_failure);
             }
@@ -554,10 +561,10 @@ struct TcpLoadBalancer::Impl {
 
             close_one(fd);
             close_one(paired_fd);
-            runtime->record_connection_close(backend_index);
+            runtime->record_connection_close(id, backend_index);
 
             if (backend_failure) {
-                runtime->record_backend_failure(backend_index);
+                runtime->record_backend_failure(id, backend_index);
                 maybe_eject(backend_index);
             }
         }

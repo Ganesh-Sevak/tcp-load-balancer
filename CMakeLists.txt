@@ -40,3 +40,9 @@ target_link_libraries(config_tests PRIVATE lb_core)
 target_compile_options(config_tests PRIVATE -Wall -Wextra -Wpedantic)
 
 add_test(NAME config_tests COMMAND config_tests)
+
+add_executable(runtime_tests tests/runtime_tests.cpp)
+target_link_libraries(runtime_tests PRIVATE lb_core)
+target_compile_options(runtime_tests PRIVATE -Wall -Wextra -Wpedantic)
+
+add_test(NAME runtime_tests COMMAND runtime_tests)
