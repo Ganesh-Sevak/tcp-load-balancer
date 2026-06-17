@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(lb_core
+    src/admin_routes.cpp
     src/config.cpp
     src/logger.cpp
     src/runtime.cpp
@@ -46,3 +47,9 @@ target_link_libraries(runtime_tests PRIVATE lb_core)
 target_compile_options(runtime_tests PRIVATE -Wall -Wextra -Wpedantic)
 
 add_test(NAME runtime_tests COMMAND runtime_tests)
+
+add_executable(admin_tests tests/admin_tests.cpp)
+target_link_libraries(admin_tests PRIVATE lb_core)
+target_compile_options(admin_tests PRIVATE -Wall -Wextra -Wpedantic)
+
+add_test(NAME admin_tests COMMAND admin_tests)

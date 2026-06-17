@@ -3,6 +3,7 @@
 #include "lb/logger.hpp"
 
 #include <arpa/inet.h>
+#include <array>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -10,12 +11,14 @@
 #include <fstream>
 #include <memory>
 #include <netdb.h>
+#include <poll.h>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 namespace lb {
 namespace {
@@ -66,24 +69,6 @@ int make_listener(const Endpoint& endpoint) {
     throw std::runtime_error("failed to bind admin listener " + endpoint_label(endpoint));
 }
 
-bool send_all(int fd, const std::string& payload) {
-    const char* data = payload.data();
-    std::size_t remaining = payload.size();
-    while (remaining > 0) {
-        const ssize_t written = send(fd, data, remaining, MSG_NOSIGNAL);
-        if (written > 0) {
-            data += written;
-            remaining -= static_cast<std::size_t>(written);
-            continue;
-        }
-        if (written == -1 && errno == EINTR) {
-            continue;
-        }
-        return false;
-    }
-    return true;
-}
-
 std::string response(const std::string& status,
                      const std::string& content_type,
                      const std::string& body,
@@ -124,72 +109,124 @@ std::string content_type_for(const std::string& path) {
     return "text/html";
 }
 
-void stream_events(int fd, const std::shared_ptr<RuntimeState>& runtime) {
-    std::ostringstream headers;
-    headers << "HTTP/1.1 200 OK\r\n"
-            << "Content-Type: text/event-stream\r\n"
-            << "Cache-Control: no-cache\r\n"
-            << "Connection: keep-alive\r\n"
-            << "Access-Control-Allow-Origin: *\r\n\r\n";
-    if (!send_all(fd, headers.str())) {
+struct AdminClient {
+    int fd{-1};
+    std::string input;
+    std::string output;
+    bool sse{false};
+    bool close_after_write{false};
+    std::chrono::steady_clock::time_point next_stats{};
+    std::chrono::steady_clock::time_point next_heartbeat{};
+};
+
+constexpr std::size_t kMaxAdminClients = 128;
+constexpr std::size_t kMaxRequestBytes = 16 * 1024;
+constexpr std::size_t kMaxQueuedBytes = 1 * 1024 * 1024;
+constexpr auto kSseStatsInterval = std::chrono::milliseconds(400);
+constexpr auto kSseHeartbeatInterval = std::chrono::seconds(5);
+
+std::string json_error(const std::string& message) {
+    return "{\"error\":\"" + message + "\"}";
+}
+
+std::string sse_headers() {
+    return "HTTP/1.1 200 OK\r\n"
+           "Content-Type: text/event-stream\r\n"
+           "Cache-Control: no-cache\r\n"
+           "Connection: keep-alive\r\n"
+           "Access-Control-Allow-Origin: *\r\n\r\n";
+}
+
+void enqueue_sse(AdminClient& client, const std::shared_ptr<RuntimeState>& runtime) {
+    const auto now = std::chrono::steady_clock::now();
+    if (client.output.size() >= kMaxQueuedBytes) {
+        client.close_after_write = true;
         return;
     }
-
-    for (int i = 0; i < 7200; ++i) {
-        const auto payload = "event: stats\ndata: " + runtime->stats_json() + "\n\n";
-        if (!send_all(fd, payload)) {
-            return;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    if (now >= client.next_stats) {
+        client.output += "event: stats\ndata: " + runtime->stats_json() + "\n\n";
+        client.next_stats = now + kSseStatsInterval;
+    }
+    if (now >= client.next_heartbeat) {
+        client.output += ": heartbeat\n\n";
+        client.next_heartbeat = now + kSseHeartbeatInterval;
     }
 }
 
-void handle_client(int fd, std::shared_ptr<RuntimeState> runtime) {
-    std::string request(4096, '\0');
-    const ssize_t n = recv(fd, request.data(), request.size() - 1, 0);
-    if (n <= 0) {
-        close(fd);
-        return;
+bool flush_client(AdminClient& client) {
+    while (!client.output.empty()) {
+        const ssize_t written = send(client.fd, client.output.data(), client.output.size(), MSG_NOSIGNAL);
+        if (written > 0) {
+            client.output.erase(0, static_cast<std::size_t>(written));
+            continue;
+        }
+        if (written == -1 && errno == EINTR) {
+            continue;
+        }
+        if (written == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            return true;
+        }
+        return false;
     }
-    request.resize(static_cast<std::size_t>(n));
+    return !client.close_after_write;
+}
 
-    std::istringstream lines(request);
+void queue_response(AdminClient& client,
+                    const std::string& status,
+                    const std::string& content_type,
+                    const std::string& body) {
+    client.output += response(status, content_type, body);
+    client.close_after_write = true;
+}
+
+void process_request(AdminClient& client, const std::shared_ptr<RuntimeState>& runtime) {
+    std::istringstream lines(client.input);
     std::string method;
     std::string path;
     std::string version;
     lines >> method >> path >> version;
 
-    if (method == "OPTIONS") {
-        send_all(fd, response("204 No Content", "text/plain", ""));
-        close(fd);
+    if (method.empty() || path.empty() || version.empty()) {
+        queue_response(client, "400 Bad Request", "application/json", json_error("malformed request line"));
         return;
     }
 
-    if (method == "GET" && path == "/stats") {
-        send_all(fd, response("200 OK", "application/json", runtime->stats_json()));
+    if (method == "OPTIONS") {
+        queue_response(client, "204 No Content", "text/plain", "");
+    } else if (method == "GET" && path == "/stats") {
+        queue_response(client, "200 OK", "application/json", runtime->stats_json());
     } else if (method == "GET" && path == "/metrics") {
-        send_all(fd, response("200 OK", "text/plain; version=0.0.4", runtime->prometheus_metrics()));
+        queue_response(client, "200 OK", "text/plain; version=0.0.4", runtime->prometheus_metrics());
     } else if (method == "GET" && path == "/events") {
-        stream_events(fd, runtime);
+        const auto now = std::chrono::steady_clock::now();
+        client.sse = true;
+        client.output += sse_headers();
+        client.next_stats = now;
+        client.next_heartbeat = now + kSseHeartbeatInterval;
+        enqueue_sse(client, runtime);
     } else if (method == "POST" && path.starts_with("/backends/")) {
-        const auto tail = path.substr(std::string("/backends/").size());
-        const auto slash = tail.find('/');
-        if (slash == std::string::npos) {
-            send_all(fd, response("404 Not Found", "application/json", "{\"error\":\"not found\"}"));
-        } else {
-            const auto id = static_cast<std::size_t>(std::stoul(tail.substr(0, slash)));
-            const auto action = tail.substr(slash + 1);
-            if (action == "drain") {
-                runtime->set_backend_state(id, BackendState::Draining);
-                send_all(fd, response("200 OK", "application/json", runtime->stats_json()));
-            } else if (action == "enable") {
-                runtime->set_backend_state(id, BackendState::Up);
-                send_all(fd, response("200 OK", "application/json", runtime->stats_json()));
-            } else {
-                send_all(fd, response("404 Not Found", "application/json", "{\"error\":\"not found\"}"));
-            }
+        std::string error;
+        const auto command = parse_admin_backend_command(path, error);
+        if (!command) {
+            queue_response(client, "400 Bad Request", "application/json", json_error(error));
+            return;
         }
+        if (command->backend_id >= runtime->scheduler().backend_count()) {
+            queue_response(client, "404 Not Found", "application/json", json_error("backend id not found"));
+            return;
+        }
+
+        if (command->action == AdminBackendAction::Drain) {
+            runtime->set_backend_state(command->backend_id, BackendState::Draining);
+        } else {
+            runtime->set_backend_state(command->backend_id, BackendState::Up);
+        }
+        queue_response(client, "200 OK", "application/json", runtime->stats_json());
     } else if (method == "GET") {
+        if (path.find("..") != std::string::npos) {
+            queue_response(client, "400 Bad Request", "application/json", json_error("invalid static path"));
+            return;
+        }
         std::string file_path = "web/dist";
         file_path += path == "/" ? "/index.html" : path;
         auto body = read_file(file_path);
@@ -197,15 +234,45 @@ void handle_client(int fd, std::shared_ptr<RuntimeState> runtime) {
             body = read_file("web/dist/index.html");
         }
         if (body.empty()) {
-            send_all(fd, response("404 Not Found", "text/plain", "dashboard build not found\n"));
+            queue_response(client, "404 Not Found", "text/plain", "dashboard build not found\n");
         } else {
-            send_all(fd, response("200 OK", content_type_for(file_path), body));
+            queue_response(client, "200 OK", content_type_for(file_path), body);
         }
     } else {
-        send_all(fd, response("405 Method Not Allowed", "application/json", "{\"error\":\"method not allowed\"}"));
+        queue_response(client, "405 Method Not Allowed", "application/json", json_error("method not allowed"));
+    }
+}
+
+bool read_client(AdminClient& client, const std::shared_ptr<RuntimeState>& runtime) {
+    std::array<char, 4096> buffer{};
+    while (!client.sse) {
+        const ssize_t n = recv(client.fd, buffer.data(), buffer.size(), 0);
+        if (n > 0) {
+            client.input.append(buffer.data(), static_cast<std::size_t>(n));
+            if (client.input.size() > kMaxRequestBytes) {
+                queue_response(client, "413 Payload Too Large", "application/json", json_error("request too large"));
+                return true;
+            }
+            if (client.input.find("\r\n\r\n") != std::string::npos || client.input.find("\n\n") != std::string::npos) {
+                process_request(client, runtime);
+                return true;
+            }
+            continue;
+        }
+        if (n == 0) {
+            return false;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return true;
+        }
+        return false;
     }
 
-    close(fd);
+    const ssize_t n = recv(client.fd, buffer.data(), buffer.size(), MSG_DONTWAIT);
+    return n != 0 || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR;
 }
 
 }  // namespace
@@ -237,18 +304,94 @@ void AdminServer::run() {
         listener_fd_ = make_listener(runtime_->config().admin);
         log(LogLevel::Info, "admin listening on " + endpoint_label(runtime_->config().admin));
 
+        std::vector<AdminClient> clients;
+        clients.reserve(kMaxAdminClients);
+
         while (!stop_requested_.load(std::memory_order_relaxed)) {
-            sockaddr_storage address{};
-            socklen_t address_length = sizeof(address);
-            const int fd = accept(listener_fd_, reinterpret_cast<sockaddr*>(&address), &address_length);
-            if (fd == -1) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            for (auto& client : clients) {
+                if (client.sse) {
+                    enqueue_sse(client, runtime_);
+                }
+            }
+
+            std::vector<pollfd> fds;
+            fds.reserve(clients.size() + 1);
+            fds.push_back(pollfd{listener_fd_, POLLIN, 0});
+            for (const auto& client : clients) {
+                short events = POLLIN;
+                if (!client.output.empty()) {
+                    events |= POLLOUT;
+                }
+                fds.push_back(pollfd{client.fd, events, 0});
+            }
+
+            const int ready = poll(fds.data(), fds.size(), 100);
+            if (ready == -1) {
+                if (errno == EINTR) {
                     continue;
                 }
+                log(LogLevel::Warn, "admin poll failed");
                 break;
             }
-            std::thread(handle_client, fd, runtime_).detach();
+
+            for (std::size_t i = 0; i < clients.size();) {
+                bool keep = true;
+                const auto revents = fds[i + 1].revents;
+                if ((revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+                    keep = false;
+                }
+                if (keep && (revents & POLLIN) != 0) {
+                    keep = read_client(clients[i], runtime_);
+                }
+                if (keep && (revents & POLLOUT) != 0) {
+                    keep = flush_client(clients[i]);
+                }
+                if (!keep) {
+                    close(clients[i].fd);
+                    clients.erase(clients.begin() + static_cast<std::ptrdiff_t>(i));
+                    continue;
+                }
+                ++i;
+            }
+
+            if ((fds[0].revents & POLLIN) != 0) {
+                while (clients.size() < kMaxAdminClients) {
+                    sockaddr_storage address{};
+                    socklen_t address_length = sizeof(address);
+                    const int fd = accept(listener_fd_, reinterpret_cast<sockaddr*>(&address), &address_length);
+                    if (fd == -1) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                            break;
+                        }
+                        if (errno == EINTR) {
+                            continue;
+                        }
+                        log(LogLevel::Warn, "admin accept failed");
+                        break;
+                    }
+                    set_nonblocking(fd);
+                    AdminClient client;
+                    client.fd = fd;
+                    clients.push_back(std::move(client));
+                }
+
+                if (clients.size() >= kMaxAdminClients) {
+                    sockaddr_storage address{};
+                    socklen_t address_length = sizeof(address);
+                    const int fd = accept(listener_fd_, reinterpret_cast<sockaddr*>(&address), &address_length);
+                    if (fd != -1) {
+                        const auto busy = response("503 Service Unavailable",
+                                                   "application/json",
+                                                   json_error("too many admin clients"));
+                        send(fd, busy.data(), busy.size(), MSG_NOSIGNAL);
+                        close(fd);
+                    }
+                }
+            }
+        }
+
+        for (auto& client : clients) {
+            close(client.fd);
         }
     } catch (const std::exception& ex) {
         log(LogLevel::Error, std::string("admin server failed: ") + ex.what());
@@ -256,4 +399,3 @@ void AdminServer::run() {
 }
 
 }  // namespace lb
-

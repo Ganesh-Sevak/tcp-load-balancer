@@ -4,9 +4,24 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
+#include <string>
 #include <thread>
 
 namespace lb {
+
+enum class AdminBackendAction {
+    Drain,
+    Enable,
+};
+
+struct AdminBackendCommand {
+    std::size_t backend_id{};
+    AdminBackendAction action{AdminBackendAction::Drain};
+};
+
+[[nodiscard]] std::optional<AdminBackendCommand> parse_admin_backend_command(const std::string& path,
+                                                                             std::string& error);
 
 class AdminServer {
 public:
@@ -29,4 +44,3 @@ private:
 };
 
 }  // namespace lb
-
