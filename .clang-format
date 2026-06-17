@@ -1,0 +1,9 @@
+BasedOnStyle: LLVM
+Language: Cpp
+ColumnLimit: 120
+IndentWidth: 4
+NamespaceIndentation: None
+PointerAlignment: Left
+SortIncludes: Never
+IndentCaseLabels: true
+SpacesBeforeTrailingComments: 2

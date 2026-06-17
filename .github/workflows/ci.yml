@@ -33,3 +33,77 @@ jobs:
       - name: Build dashboard
         working-directory: web
         run: npm ci && npm run build
+
+  sanitizers:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: asan-ubsan
+            cxx_flags: -fsanitize=address,undefined -fno-omit-frame-pointer
+            linker_flags: -fsanitize=address,undefined
+            env: ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1 UBSAN_OPTIONS=print_stacktrace=1
+          - name: tsan
+            cxx_flags: -fsanitize=thread -fno-omit-frame-pointer
+            linker_flags: -fsanitize=thread
+            env: TSAN_OPTIONS=halt_on_error=1
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake
+
+      - name: Configure ${{ matrix.name }}
+        run: >
+          cmake -S . -B build-${{ matrix.name }}
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="${{ matrix.cxx_flags }}"
+          -DCMAKE_EXE_LINKER_FLAGS="${{ matrix.linker_flags }}"
+
+      - name: Build ${{ matrix.name }}
+        run: cmake --build build-${{ matrix.name }} --parallel
+
+      - name: Test ${{ matrix.name }}
+        run: ${{ matrix.env }} ctest --test-dir build-${{ matrix.name }} --output-on-failure
+
+  style-tidy:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake clang-format clang-tidy
+
+      - name: Report clang-format drift
+        run: |
+          files=$(find include src tests -type f \( -name '*.hpp' -o -name '*.cpp' \))
+          clang-format --dry-run $files || true
+
+      - name: Configure compile commands
+        run: cmake -S . -B build-tidy -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Run clang-tidy
+        run: |
+          files=$(find src tests -type f -name '*.cpp' ! -name 'config_fuzzer.cpp')
+          clang-tidy -p build-tidy $files
+
+  fuzz-config-parser:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang cmake
+
+      - name: Configure fuzzer
+        run: CC=clang CXX=clang++ cmake -S . -B build-fuzz -DCMAKE_BUILD_TYPE=Debug -DLB_ENABLE_FUZZING=ON
+
+      - name: Build fuzzer
+        run: cmake --build build-fuzz --target config_fuzzer --parallel
+
+      - name: Smoke fuzz config parser
+        run: ./build-fuzz/config_fuzzer -runs=1000

@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+option(LB_ENABLE_FUZZING "Build libFuzzer targets" OFF)
+
 add_library(lb_core
     src/admin_routes.cpp
     src/config.cpp
@@ -53,3 +55,17 @@ target_link_libraries(admin_tests PRIVATE lb_core)
 target_compile_options(admin_tests PRIVATE -Wall -Wextra -Wpedantic)
 
 add_test(NAME admin_tests COMMAND admin_tests)
+
+if(LB_ENABLE_FUZZING)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "LB_ENABLE_FUZZING requires Clang/libFuzzer")
+    endif()
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+        message(FATAL_ERROR "LB_ENABLE_FUZZING requires LLVM Clang with libFuzzer; AppleClang does not ship it")
+    endif()
+
+    add_executable(config_fuzzer tests/config_fuzzer.cpp)
+    target_link_libraries(config_fuzzer PRIVATE lb_core)
+    target_compile_options(config_fuzzer PRIVATE -fsanitize=fuzzer,address -fno-omit-frame-pointer)
+    target_link_options(config_fuzzer PRIVATE -fsanitize=fuzzer,address)
+endif()
